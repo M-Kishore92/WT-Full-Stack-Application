@@ -1,0 +1,162 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  ADMIN
+  ORGANIZER
+  ATTENDEE
+}
+
+enum EventStatus {
+  DRAFT
+  PUBLISHED
+  CANCELLED
+  COMPLETED
+}
+
+enum ReservationStatus {
+  ACTIVE
+  CONVERTED
+  EXPIRED
+  RELEASED
+}
+
+enum OrderStatus {
+  PENDING
+  PAID
+  FAILED
+}
+
+enum TransactionStatus {
+  INITIATED
+  APPROVED
+  REJECTED
+}
+
+model User {
+  id            String         @id @default(uuid())
+  name          String
+  email         String         @unique
+  password_hash String
+  role          Role           @default(ATTENDEE)
+  created_at    DateTime       @default(now())
+  updated_at    DateTime       @updatedAt
+
+  events        Event[]
+  reservations  Reservation[]
+  orders        Order[]
+
+  @@map("users")
+}
+
+model Event {
+  id              String         @id @default(uuid())
+  organizer_id    String
+  title           String
+  description     String?
+  venue           String
+  starts_at       DateTime
+  sales_cutoff_at DateTime
+  status          EventStatus    @default(PUBLISHED)
+  created_at      DateTime       @default(now())
+  updated_at      DateTime       @updatedAt
+
+  organizer       User           @relation(fields: [organizer_id], references: [id], onDelete: Cascade)
+  tiers           TicketTier[]
+
+  @@index([organizer_id])
+  @@index([status])
+  @@map("events")
+}
+
+model TicketTier {
+  id           String         @id @default(uuid())
+  event_id     String
+  name         String
+  price        Decimal        @db.Decimal(10, 2)
+  total_qty    Int
+  sold_qty     Int            @default(0)
+  created_at   DateTime       @default(now())
+  updated_at   DateTime       @updatedAt
+
+  event        Event          @relation(fields: [event_id], references: [id], onDelete: Cascade)
+  reservations Reservation[]
+  tickets      Ticket[]
+
+  @@index([event_id])
+  @@map("ticket_tiers")
+}
+
+model Reservation {
+  id         String            @id @default(uuid())
+  user_id    String
+  tier_id    String
+  qty        Int
+  status     ReservationStatus @default(ACTIVE)
+  expires_at DateTime
+  created_at DateTime          @default(now())
+  updated_at DateTime          @updatedAt
+
+  user       User              @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  tier       TicketTier        @relation(fields: [tier_id], references: [id], onDelete: Cascade)
+  order      Order?
+
+  @@index([tier_id, status, expires_at])
+  @@index([user_id])
+  @@map("reservations")
+}
+
+model Order {
+  id              String        @id @default(uuid())
+  user_id         String
+  reservation_id  String        @unique
+  total_amount    Decimal       @db.Decimal(10, 2)
+  status          OrderStatus   @default(PENDING)
+  idempotency_key String        @unique
+  created_at      DateTime      @default(now())
+  updated_at      DateTime      @updatedAt
+
+  user            User          @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  reservation     Reservation   @relation(fields: [reservation_id], references: [id], onDelete: Cascade)
+  transactions    Transaction[]
+  tickets         Ticket[]
+
+  @@index([user_id])
+  @@index([status])
+  @@map("orders")
+}
+
+model Transaction {
+  id          String            @id @default(uuid())
+  order_id    String
+  amount      Decimal           @db.Decimal(10, 2)
+  status      TransactionStatus @default(INITIATED)
+  gateway_ref String?
+  created_at  DateTime          @default(now())
+
+  order       Order             @relation(fields: [order_id], references: [id], onDelete: Cascade)
+
+  @@index([order_id])
+  @@map("transactions")
+}
+
+model Ticket {
+  id         String     @id @default(uuid())
+  order_id   String
+  tier_id    String
+  code       String     @unique
+  created_at DateTime   @default(now())
+
+  order      Order      @relation(fields: [order_id], references: [id], onDelete: Cascade)
+  tier       TicketTier @relation(fields: [tier_id], references: [id], onDelete: Cascade)
+
+  @@index([order_id])
+  @@index([tier_id])
+  @@map("tickets")
+}

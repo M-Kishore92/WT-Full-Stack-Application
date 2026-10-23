@@ -1,0 +1,529 @@
+{
+  "info": {
+    "_postman_id": "7b8e1a2f-9012-4d34-b567-890123456789",
+    "name": "Multi-Tenant Event & Ticket Reservation System API",
+    "description": "Comprehensive Postman Collection v2.1 covering Authentication, Event Lifecycle, Pessimistic Row-Locking Reservations, Payment Queues (BullMQ), Real-Time Analytics, and Critical Edge Cases (409 Oversell, 410 Hold Expiry, 403 RBAC).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Register Attendee",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"new_attendee@test.local\",\n  \"password\": \"Password123!\",\n  \"name\": \"New Attendee\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/register",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "register"]
+            },
+            "description": "Registers a new user account with default ATTENDEE role, hashes password with bcrypt, and returns JWT token."
+          }
+        },
+        {
+          "name": "Login Organizer",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json.token) {",
+                  "    pm.environment.set('organizerToken', json.token);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"organizer1@fest.local\",\n  \"password\": \"Password123!\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "login"]
+            },
+            "description": "Authenticates organizer1 (Apex Events) and captures the JWT in the organizerToken environment variable."
+          }
+        },
+        {
+          "name": "Login Attendee",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json.token) {",
+                  "    pm.environment.set('attendeeToken', json.token);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"attendee1@guest.local\",\n  \"password\": \"Password123!\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "login"]
+            },
+            "description": "Authenticates seeded attendee1 (Alice Walker) and saves token into attendeeToken."
+          }
+        },
+        {
+          "name": "Login Admin",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json.token) {",
+                  "    pm.environment.set('adminToken', json.token);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"admin@tickets.local\",\n  \"password\": \"Password123!\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "login"]
+            },
+            "description": "Authenticates global system administrator and saves adminToken."
+          }
+        },
+        {
+          "name": "Get Current Profile (Me)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{attendeeToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/me",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "me"]
+            },
+            "description": "Retrieves authenticated user profile (id, name, email, role) based on Bearer JWT."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Events",
+      "item": [
+        {
+          "name": "List Public Events",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json.events && json.events.length > 0) {",
+                  "    pm.environment.set('eventId', json.events[0].id);",
+                  "    if (json.events[0].tiers && json.events[0].tiers.length > 0) {",
+                  "        pm.environment.set('tierId', json.events[0].tiers[0].id);",
+                  "    }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": ["{{baseUrl}}"],
+              "path": ["events"]
+            },
+            "description": "Returns all published events with nested tiers and pricing. Results are cached in Redis (cache:events:public)."
+          }
+        },
+        {
+          "name": "Get Event Details",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/events/{{eventId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["events", "{{eventId}}"]
+            },
+            "description": "Fetches a specific event by UUID with tiers, venue, countdown cut-off, and real-time inventory."
+          }
+        },
+        {
+          "name": "Create Event with Tiers (Organizer)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json.event) {",
+                  "    pm.environment.set('eventId', json.event.id);",
+                  "    if (json.event.tiers && json.event.tiers.length > 0) {",
+                  "        pm.environment.set('tierId', json.event.tiers[0].id);",
+                  "    }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{organizerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Postman Tech Fest 2026\",\n  \"description\": \"Live event created via Postman\",\n  \"venue\": \"Auditorium A\",\n  \"starts_at\": \"2026-11-20T10:00:00Z\",\n  \"sales_cutoff_at\": \"2026-11-19T23:59:59Z\",\n  \"tiers\": [\n    {\n      \"name\": \"General Admission\",\n      \"price\": 49.99,\n      \"total_qty\": 200\n    },\n    {\n      \"name\": \"VIP Pass\",\n      \"price\": 149.99,\n      \"total_qty\": 50\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": ["{{baseUrl}}"],
+              "path": ["events"]
+            },
+            "description": "Allows ORGANIZER or ADMIN to publish a new event with multiple ticket tiers in an atomic transaction."
+          }
+        },
+        {
+          "name": "Update Event (Organizer)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{organizerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Postman Tech Fest 2026 (Updated Venue)\",\n  \"venue\": \"Main Convention Center, Hall B\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events/{{eventId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["events", "{{eventId}}"]
+            },
+            "description": "Updates event metadata. Validates tenant ownership so organizers can only mutate their own events."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Reservations",
+      "item": [
+        {
+          "name": "Create Reservation Hold (Pessimistic Row Lock)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json.reservation) {",
+                  "    pm.environment.set('reservationId', json.reservation.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{attendeeToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tierId\": \"{{tierId}}\",\n  \"qty\": 2\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/reservations",
+              "host": ["{{baseUrl}}"],
+              "path": ["reservations"]
+            },
+            "description": "Executes SELECT FOR UPDATE pessimistic lock on Postgres ticket tier row, verifies capacity, and holds tickets with a 10-minute expiry."
+          }
+        },
+        {
+          "name": "Get Reservation by ID",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{attendeeToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/reservations/{{reservationId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["reservations", "{{reservationId}}"]
+            },
+            "description": "Retrieves reservation hold status, ticket tier information, and expires_at countdown."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Payments",
+      "item": [
+        {
+          "name": "Create Order from Hold",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json.order) {",
+                  "    pm.environment.set('orderId', json.order.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{attendeeToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reservationId\": \"{{reservationId}}\",\n  \"idempotencyKey\": \"idem-postman-{{$guid}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/orders",
+              "host": ["{{baseUrl}}"],
+              "path": ["orders"]
+            },
+            "description": "Validates reservation is ACTIVE and not expired, enforces idempotent order creation, and computes total amount."
+          }
+        },
+        {
+          "name": "Get Order by ID",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{attendeeToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/orders/{{orderId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["orders", "{{orderId}}"]
+            },
+            "description": "Retrieves order status, associated reservation, transactions, and issued tickets."
+          }
+        },
+        {
+          "name": "Charge Payment (Queue in BullMQ)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{attendeeToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"orderId\": \"{{orderId}}\",\n  \"forceOutcome\": \"APPROVE\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/payments/charge",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments", "charge"]
+            },
+            "description": "Creates an INITIATED Transaction record and enqueues payment job into BullMQ (paymentQueue) for asynchronous processing."
+          }
+        },
+        {
+          "name": "Get Payment Status & Issued Tickets",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{attendeeToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments/status/{{orderId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments", "status", "{{orderId}}"]
+            },
+            "description": "Polls payment status. When status is PAID, returns generated unique ticket codes (e.g., TKT-161DC4961988)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Analytics",
+      "item": [
+        {
+          "name": "Get Revenue Analytics",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{organizerToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/analytics/revenue",
+              "host": ["{{baseUrl}}"],
+              "path": ["analytics", "revenue"]
+            },
+            "description": "Aggregates total gross revenue, paid orders count, and per-event revenue breakdowns for the authenticated organizer."
+          }
+        },
+        {
+          "name": "Get Tier Sales & Inventory Analytics",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{organizerToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/analytics/tiers",
+              "host": ["{{baseUrl}}"],
+              "path": ["analytics", "tiers"]
+            },
+            "description": "Returns tier-by-tier capacity breakdown (total_qty, sold_qty, remaining_qty, fill percentage)."
+          }
+        },
+        {
+          "name": "Get Conversion Rate Analytics",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{organizerToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/analytics/conversion",
+              "host": ["{{baseUrl}}"],
+              "path": ["analytics", "conversion"]
+            },
+            "description": "Calculates funnel conversion percentage: total reservations held vs converted paid orders."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Edge Cases",
+      "item": [
+        {
+          "name": "Edge Case 409 Conflict: Oversell Reservation",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{attendeeToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tierId\": \"{{tierId}}\",\n  \"qty\": 999999\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/reservations",
+              "host": ["{{baseUrl}}"],
+              "path": ["reservations"]
+            },
+            "description": "EDGE CASE: Attempts to hold more tickets than available in Postgres inventory. Expects HTTP 409 Conflict with message 'Not enough tickets available'."
+          }
+        },
+        {
+          "name": "Edge Case 410 Gone: Checkout Expired Hold",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{attendeeToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reservationId\": \"00000000-0000-0000-0000-000000000000\",\n  \"idempotencyKey\": \"idem-expired-test\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/orders",
+              "host": ["{{baseUrl}}"],
+              "path": ["orders"]
+            },
+            "description": "EDGE CASE: Attempts to create an order for a reservation that has expired or is no longer ACTIVE. Expects HTTP 410 Gone with 'Reservation has expired or is no longer active'."
+          }
+        },
+        {
+          "name": "Edge Case 403 Forbidden: Attendee Creating Event (RBAC)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{attendeeToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Unauthorized Event\",\n  \"venue\": \"Nowhere\",\n  \"starts_at\": \"2026-12-01T00:00:00Z\",\n  \"sales_cutoff_at\": \"2026-11-30T00:00:00Z\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": ["{{baseUrl}}"],
+              "path": ["events"]
+            },
+            "description": "EDGE CASE: Role-Based Access Control violation where an ATTENDEE attempts to invoke POST /events. Expects HTTP 403 Forbidden."
+          }
+        },
+        {
+          "name": "Edge Case 403 Forbidden: Multi-Tenant Boundary Violation",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{organizer2Token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Hacked Event Name by Tenant 2\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events/{{eventId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["events", "{{eventId}}"]
+            },
+            "description": "EDGE CASE: Multi-tenant boundary check where Organizer 2 attempts to update Organizer 1's event. Expects HTTP 403 Forbidden."
+          }
+        }
+      ]
+    }
+  ]
+}

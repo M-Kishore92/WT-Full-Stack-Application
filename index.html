@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AJAX Data Retrieval</title>
+    
+    <style>
+        /* Base page styling */
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f4;
+            padding: 30px;
+        }
+
+        /* Container card */
+        .card {
+            width: 380px;
+            margin: auto;
+            padding: 25px;
+            background-color: #ffffff;
+            box-shadow: 0 0 10px #ccc;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        /* Button styling */
+        button {
+            padding: 10px 20px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-size: 15px;
+            border-radius: 4px;
+        }
+
+        button:hover {
+            background-color: #0056b3;
+        }
+
+        /* Output container */
+        #dataBox {
+            margin-top: 20px;
+            padding: 15px;
+            text-align: left;
+            border-top: 1px solid #ddd;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="card">
+        <h2>AJAX Application</h2>
+        
+        <!-- Action Trigger Button -->
+        <button onclick="fetchData()">Fetch Data</button>
+
+        <!-- Response Display Container -->
+        <div id="dataBox">
+            Click the button to load data.
+        </div>
+    </div>
+
+    <script>
+        // Function to handle asynchronous request
+        function fetchData() {
+            // Create XMLHttpRequest instance
+            let request = new XMLHttpRequest();
+
+            // Open asynchronous GET request
+            request.open("GET", "https://jsonplaceholder.typicode.com/posts/1", true);
+
+            // Handle server response
+            request.onload = function() {
+                let box = document.getElementById("dataBox");
+
+                if (request.status === 200) {
+                    let result = JSON.parse(request.responseText);
+                    box.innerHTML = "<h3>" + result.title + "</h3>" +
+                                    "<p>" + result.body + "</p>";
+                } else {
+                    box.innerHTML = "Failed to load data from server.";
+                }
+            };
+
+            // Handle transmission errors
+            request.onerror = function() {
+                document.getElementById("dataBox").innerHTML = "Network error occurred.";
+            };
+
+            // Dispatch request
+            request.send();
+        }
+    </script>
+
+</body>
+</html>
